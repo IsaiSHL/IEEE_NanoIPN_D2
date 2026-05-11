@@ -1,49 +1,91 @@
 `default_nettype none
-`timescale 1ns / 1ps
 
-/* This testbench just instantiates the module and makes some convenient wires
-   that can be driven / tested by the cocotb test.py.
-*/
-module tb ();
+`timescale 1ns/1ps
 
-  // Dump the signals to a FST file. You can view it with gtkwave or surfer.
-  initial begin
-    $dumpfile("tb.fst");
-    $dumpvars(0, tb);
-    #1;
-  end
+module tb;
 
-  // Wire up the inputs and outputs:
-  reg clk;
-  reg rst_n;
-  reg ena;
-  reg [7:0] ui_in;
-  reg [7:0] uio_in;
-  wire [7:0] uo_out;
-  wire [7:0] uio_out;
-  wire [7:0] uio_oe;
-`ifdef GL_TEST
-  wire VPWR = 1'b1;
-  wire VGND = 1'b0;
-`endif
+    // Señales del DUT
+    reg clk;
+    reg rst_n;
+    reg [7:0] ui_in;
+    reg [7:0] uio_in;
 
-  // Replace tt_um_example with your module name:
-  tt_um_example user_project (
+    wire [7:0] uo_out;
+    wire [7:0] uio_out;
+    wire [7:0] uio_oe;
 
-      // Include power ports for the Gate Level test:
-`ifdef GL_TEST
-      .VPWR(VPWR),
-      .VGND(VGND),
-`endif
+    // Instancia del diseño (wrapper)
+    tt_um_example dut (
+        .ui_in(ui_in),
+        .uo_out(uo_out),
+        .uio_in(uio_in),
+        .uio_out(uio_out),
+        .uio_oe(uio_oe),
+        .ena(1'b1),
+        .clk(clk),
+        .rst_n(rst_n)
+    );
 
-      .ui_in  (ui_in),    // Dedicated inputs
-      .uo_out (uo_out),   // Dedicated outputs
-      .uio_in (uio_in),   // IOs: Input path
-      .uio_out(uio_out),  // IOs: Output path
-      .uio_oe (uio_oe),   // IOs: Enable path (active high: 0=input, 1=output)
-      .ena    (ena),      // enable - goes high when design is selected
-      .clk    (clk),      // clock
-      .rst_n  (rst_n)     // not reset
-  );
+    // -----------------------
+    // Clock (50MHz → 20ns)
+    // -----------------------
+    always #10 clk = ~clk;
+
+    // -----------------------
+    // Simulación
+    // -----------------------
+    initial begin
+        // Inicialización
+        clk = 0;
+        rst_n = 0;
+        ui_in = 0;
+        uio_in = 0;
+
+        // Reset
+        #100;
+        rst_n = 1;
+
+        // -----------------------
+        // START (simula rebote leve)
+        // -----------------------
+        #200;
+        ui_in[0] = 1;
+        #20;
+        ui_in[0] = 0;
+
+        // Dejar correr tiempo
+        #100000;
+
+        // -----------------------
+        // LAP
+        // -----------------------
+        ui_in[1] = 1;
+        #20;
+        ui_in[1] = 0;
+
+        #50000;
+
+        // -----------------------
+        // STOP
+        // -----------------------
+        ui_in[0] = 1;
+        #20;
+        ui_in[0] = 0;
+
+        #50000;
+
+        $finish;
+    end
+
+    // -----------------------
+    // Monitor (debug útil)
+    // -----------------------
+    initial begin
+        $dumpfile("wave.vcd");
+        $dumpvars(0, tb);
+
+        $display("Time\tSegments\tAnodes");
+        $monitor("%0t\t%b\t%b", $time, uo_out, uio_out[3:0]);
+    end
 
 endmodule
