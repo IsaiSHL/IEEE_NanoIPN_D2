@@ -5,23 +5,277 @@
 
 `default_nettype none
 
-module tt_um_example (
-    input  wire [7:0] ui_in,    // Dedicated inputs
-    output wire [7:0] uo_out,   // Dedicated outputs
-    input  wire [7:0] uio_in,   // IOs: Input path
-    output wire [7:0] uio_out,  // IOs: Output path
-    output wire [7:0] uio_oe,   // IOs: Enable path (active high: 0=input, 1=output)
-    input  wire       ena,      // always 1 when the design is powered, so you can ignore it
-    input  wire       clk,      // clock
-    input  wire       rst_n     // reset_n - low to reset
+// ===============================
+// WRAPPER TinyTapeout
+// ===============================
+module tt_um_chronoINAAL (
+    input  wire [7:0] ui_in,
+    output wire [7:0] uo_out,
+    input  wire [7:0] uio_in,
+    output wire [7:0] uio_out,
+    output wire [7:0] uio_oe,
+    input  wire       ena,
+    input  wire       clk,
+    input  wire       rst_n
 );
 
-  // All output pins must be assigned. If not used, assign to 0.
-  assign uo_out  = ui_in + uio_in;  // Example: ou_out is the sum of ui_in and uio_in
-  assign uio_out = 0;
-  assign uio_oe  = 0;
+    // Inputs
+    wire btn_start = ui_in[0];
+    wire btn_lap   = ui_in[1];
 
-  // List all unused inputs to prevent warnings
-  wire _unused = &{ena, clk, rst_n, 1'b0};
+    // Outputs internos
+    wire [7:0] segments;
+    wire [3:0] anodes;
 
+    // Instancia principal
+    cronometro_top uut (
+        .clk(clk),
+        .rst_n(rst_n),
+        .btn_start(btn_start),
+        .btn_lap(btn_lap),
+        .segments(segments),
+        .anodes(anodes)
+    );
+
+    // Salidas
+    assign uo_out = segments;
+
+    assign uio_out[3:0] = anodes;
+    assign uio_oe[3:0]  = 4'b1111;
+
+    assign uio_out[7:4] = 4'b0000;
+    assign uio_oe[7:4]  = 4'b0000;
+
+    // Evitar warnings
+    wire _unused = &{ena, ui_in[7:2], uio_in, 1'b0};
+
+endmodule
+
+
+// ===============================
+// CRONÓMETRO TOP
+// ===============================
+module cronometro_top (
+    input  wire       clk,
+    input  wire       rst_n,
+    input  wire       btn_start,
+    input  wire       btn_lap,
+    output wire [7:0] segments,
+    output reg  [3:0] anodes
+);
+
+    // -----------------------
+    // Debounce
+    // -----------------------
+    wire start_pulse, lap_pulse;
+
+    debounce db_start (
+        .clk(clk),
+        .rst_n(rst_n),
+        .noisy_in(btn_start),
+        .clean_pulse(start_pulse)
+    );
+
+    debounce db_lap (
+        .clk(clk),
+        .rst_n(rst_n),
+        .noisy_in(btn_lap),
+        .clean_pulse(lap_pulse)
+    );
+
+    // -----------------------
+    // Señales internas
+    // -----------------------
+    wire tick_10ms;
+    reg running;
+    reg lap_mode;
+
+    reg [3:0] cent_un, cent_dec;
+    reg [3:0] seg_un, seg_dec;
+
+    reg [3:0] lap_cent_un, lap_cent_dec;
+    reg [3:0] lap_seg_un, lap_seg_dec;
+
+    // -----------------------
+    // Prescaler 10ms (50MHz)
+    // -----------------------
+    reg [19:0] prescaler_cnt;
+    assign tick_10ms = (prescaler_cnt == 20'd499999);
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            prescaler_cnt <= 0;
+        else if (tick_10ms)
+            prescaler_cnt <= 0;
+        else
+            prescaler_cnt <= prescaler_cnt + 1'b1;
+    end
+
+    // -----------------------
+    // FSM control
+    // -----------------------
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            running  <= 0;
+            lap_mode <= 0;
+        end else begin
+            if (start_pulse) running  <= ~running;
+            if (lap_pulse)   lap_mode <= ~lap_mode;
+        end
+    end
+
+    // -----------------------
+    // Contadores BCD
+    // -----------------------
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            {cent_un, cent_dec, seg_un, seg_dec} <= 0;
+        end else if (running && tick_10ms) begin
+            if (cent_un == 9) begin
+                cent_un <= 0;
+                if (cent_dec == 9) begin
+                    cent_dec <= 0;
+                    if (seg_un == 9) begin
+                        seg_un <= 0;
+                        if (seg_dec == 5)
+                            seg_dec <= 0;
+                        else
+                            seg_dec <= seg_dec + 1;
+                    end else seg_un <= seg_un + 1;
+                end else cent_dec <= cent_dec + 1;
+            end else cent_un <= cent_un + 1;
+        end
+    end
+
+    // -----------------------
+    // Registro LAP
+    // -----------------------
+    always @(posedge clk) begin
+        if (lap_pulse && !lap_mode) begin
+            lap_cent_un  <= cent_un;
+            lap_cent_dec <= cent_dec;
+            lap_seg_un   <= seg_un;
+            lap_seg_dec  <= seg_dec;
+        end
+    end
+
+    // -----------------------
+    // Multiplexor display
+    // -----------------------
+    reg [1:0] display_sel;
+    reg [3:0] current_digit;
+
+    reg [15:0] refresh_cnt;
+    always @(posedge clk)
+        refresh_cnt <= refresh_cnt + 1;
+
+    always @(posedge refresh_cnt[15] or negedge rst_n) begin
+        if (!rst_n)
+            display_sel <= 0;
+        else
+            display_sel <= display_sel + 1;
+    end
+
+    always @(*) begin
+        case (display_sel)
+            2'b00: begin
+                current_digit = lap_mode ? lap_cent_un : cent_un;
+                anodes = 4'b1110;
+            end
+            2'b01: begin
+                current_digit = lap_mode ? lap_cent_dec : cent_dec;
+                anodes = 4'b1101;
+            end
+            2'b10: begin
+                current_digit = lap_mode ? lap_seg_un : seg_un;
+                anodes = 4'b1011;
+            end
+            2'b11: begin
+                current_digit = lap_mode ? lap_seg_dec : seg_dec;
+                anodes = 4'b0111;
+            end
+        endcase
+    end
+
+    // -----------------------
+    // Decoder
+    // -----------------------
+    bcd_to_7seg decoder (
+        .bcd(current_digit),
+        .seg(segments)
+    );
+
+endmodule
+
+
+// ===============================
+// DEBOUNCE
+// ===============================
+module debounce (
+    input  wire clk,
+    input  wire rst_n,
+    input  wire noisy_in,
+    output reg  clean_pulse
+);
+
+    reg sync_0, sync_1;
+    always @(posedge clk) begin
+        sync_0 <= noisy_in;
+        sync_1 <= sync_0;
+    end
+
+    reg [18:0] cnt;
+    reg stable_state;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            cnt <= 0;
+            stable_state <= 0;
+        end else if (sync_1 != stable_state) begin
+            cnt <= cnt + 1;
+            if (cnt == 19'd499999) begin
+                stable_state <= sync_1;
+                cnt <= 0;
+            end
+        end else begin
+            cnt <= 0;
+        end
+    end
+
+    reg stable_prev;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            stable_prev <= 0;
+            clean_pulse <= 0;
+        end else begin
+            clean_pulse <= (stable_state && !stable_prev);
+            stable_prev <= stable_state;
+        end
+    end
+
+endmodule
+
+
+// ===============================
+// BCD a 7 segmentos
+// ===============================
+module bcd_to_7seg (
+    input  wire [3:0] bcd,
+    output reg  [7:0] seg
+);
+    always @(*) begin
+        case (bcd)
+            4'h0: seg = 8'b1100_0000;
+            4'h1: seg = 8'b1111_1001;
+            4'h2: seg = 8'b1010_0100;
+            4'h3: seg = 8'b1011_0000;
+            4'h4: seg = 8'b1001_1001;
+            4'h5: seg = 8'b1001_0010;
+            4'h6: seg = 8'b1000_0010;
+            4'h7: seg = 8'b1111_1000;
+            4'h8: seg = 8'b1000_0000;
+            4'h9: seg = 8'b1001_0000;
+            default: seg = 8'b1111_1111;
+        endcase
+    end
 endmodule
