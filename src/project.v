@@ -105,7 +105,10 @@ module cronometro_top (
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            {cent_un, cent_dec, seg_un, seg_dec} <= 0;
+            cent_un  <= 0;
+            cent_dec <= 0;
+            seg_un   <= 0;
+            seg_dec  <= 0;
         end else if (running && tick_10ms) begin
             if (cent_un == 9) begin
                 cent_un <= 0;
@@ -123,17 +126,27 @@ module cronometro_top (
         end
     end
 
+    // =========================
+    // DISPLAY REFRESH CORREGIDO
+    // =========================
+
     reg [1:0] display_sel;
     reg [3:0] current_digit;
-
     reg [15:0] refresh_cnt;
-    always @(posedge clk)
-        refresh_cnt <= refresh_cnt + 1;
 
-    always @(posedge refresh_cnt[15] or negedge rst_n) begin
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            refresh_cnt <= 0;
+        else
+            refresh_cnt <= refresh_cnt + 1;
+    end
+
+    wire refresh_tick = refresh_cnt[15];
+
+    always @(posedge clk or negedge rst_n) begin
         if (!rst_n)
             display_sel <= 0;
-        else
+        else if (refresh_tick)
             display_sel <= display_sel + 1;
     end
 
@@ -155,6 +168,10 @@ module cronometro_top (
                 current_digit = seg_dec;
                 anodes = 4'b0111;
             end
+            default: begin
+                current_digit = 0;
+                anodes = 4'b1111;
+            end
         endcase
     end
 
@@ -174,9 +191,15 @@ module debounce (
 );
 
     reg sync_0, sync_1;
-    always @(posedge clk) begin
-        sync_0 <= noisy_in;
-        sync_1 <= sync_0;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            sync_0 <= 0;
+            sync_1 <= 0;
+        end else begin
+            sync_0 <= noisy_in;
+            sync_1 <= sync_0;
+        end
     end
 
 `ifdef SIM
@@ -204,6 +227,7 @@ module debounce (
     end
 
     reg stable_prev;
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             stable_prev <= 0;
