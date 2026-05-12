@@ -35,7 +35,7 @@ endif
 COMPILE_ARGS 		+= -I$(SRC_DIR)
 
 # Include the testbench sources:
-VERILOG_SOURCES += $(PWD)/tb.v
+# VERILOG_SOURCES += $(PWD)/tb.v
 TOPLEVEL = tt_um_chronoINAAL
 
 # List test modules to run, separated by commas and without the .py suffix:
