@@ -15,7 +15,7 @@ module tb;
     wire [7:0] uio_oe;
 
     // Instancia del diseño (wrapper)
-    tt_um_example dut (
+    tt_um_chronoINAAL dut (
         .ui_in(ui_in),
         .uo_out(uo_out),
         .uio_in(uio_in),
