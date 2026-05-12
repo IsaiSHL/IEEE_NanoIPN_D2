@@ -5,9 +5,6 @@
 
 `default_nettype none
 
-// ===============================
-// WRAPPER TinyTapeout
-// ===============================
 module tt_um_chronoINAAL (
     input  wire [7:0] ui_in,
     output wire [7:0] uo_out,
@@ -19,15 +16,12 @@ module tt_um_chronoINAAL (
     input  wire       rst_n
 );
 
-    // Inputs
     wire btn_start = ui_in[0];
     wire btn_lap   = ui_in[1];
 
-    // Outputs internos
     wire [7:0] segments;
     wire [3:0] anodes;
 
-    // Instancia principal
     cronometro_top uut (
         .clk(clk),
         .rst_n(rst_n),
@@ -37,7 +31,6 @@ module tt_um_chronoINAAL (
         .anodes(anodes)
     );
 
-    // Salidas
     assign uo_out = segments;
 
     assign uio_out[3:0] = anodes;
@@ -46,27 +39,20 @@ module tt_um_chronoINAAL (
     assign uio_out[7:4] = 4'b0000;
     assign uio_oe[7:4]  = 4'b0000;
 
-    // Evitar warnings
     wire _unused = &{ena, ui_in[7:2], uio_in, 1'b0};
 
 endmodule
 
 
-// ===============================
-// CRONÓMETRO TOP
-// ===============================
 module cronometro_top (
-    input  wire       clk,
-    input  wire       rst_n,
-    input  wire       btn_start,
-    input  wire       btn_lap,
+    input  wire clk,
+    input  wire rst_n,
+    input  wire btn_start,
+    input  wire btn_lap,
     output wire [7:0] segments,
     output reg  [3:0] anodes
 );
 
-    // -----------------------
-    // Debounce
-    // -----------------------
     wire start_pulse, lap_pulse;
 
     debounce db_start (
@@ -83,9 +69,6 @@ module cronometro_top (
         .clean_pulse(lap_pulse)
     );
 
-    // -----------------------
-    // Señales internas
-    // -----------------------
     wire tick_10ms;
     reg running;
     reg lap_mode;
@@ -93,14 +76,13 @@ module cronometro_top (
     reg [3:0] cent_un, cent_dec;
     reg [3:0] seg_un, seg_dec;
 
-    reg [3:0] lap_cent_un, lap_cent_dec;
-    reg [3:0] lap_seg_un, lap_seg_dec;
-
-    // -----------------------
-    // Prescaler 10ms (50MHz)
-    // -----------------------
     reg [19:0] prescaler_cnt;
+
+`ifdef SIM
+    assign tick_10ms = (prescaler_cnt == 1000);
+`else
     assign tick_10ms = (prescaler_cnt == 20'd499999);
+`endif
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n)
@@ -111,9 +93,6 @@ module cronometro_top (
             prescaler_cnt <= prescaler_cnt + 1'b1;
     end
 
-    // -----------------------
-    // FSM control
-    // -----------------------
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             running  <= 0;
@@ -124,9 +103,6 @@ module cronometro_top (
         end
     end
 
-    // -----------------------
-    // Contadores BCD
-    // -----------------------
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             {cent_un, cent_dec, seg_un, seg_dec} <= 0;
@@ -147,21 +123,6 @@ module cronometro_top (
         end
     end
 
-    // -----------------------
-    // Registro LAP
-    // -----------------------
-    always @(posedge clk) begin
-        if (lap_pulse && !lap_mode) begin
-            lap_cent_un  <= cent_un;
-            lap_cent_dec <= cent_dec;
-            lap_seg_un   <= seg_un;
-            lap_seg_dec  <= seg_dec;
-        end
-    end
-
-    // -----------------------
-    // Multiplexor display
-    // -----------------------
     reg [1:0] display_sel;
     reg [3:0] current_digit;
 
@@ -179,27 +140,24 @@ module cronometro_top (
     always @(*) begin
         case (display_sel)
             2'b00: begin
-                current_digit = lap_mode ? lap_cent_un : cent_un;
+                current_digit = cent_un;
                 anodes = 4'b1110;
             end
             2'b01: begin
-                current_digit = lap_mode ? lap_cent_dec : cent_dec;
+                current_digit = cent_dec;
                 anodes = 4'b1101;
             end
             2'b10: begin
-                current_digit = lap_mode ? lap_seg_un : seg_un;
+                current_digit = seg_un;
                 anodes = 4'b1011;
             end
             2'b11: begin
-                current_digit = lap_mode ? lap_seg_dec : seg_dec;
+                current_digit = seg_dec;
                 anodes = 4'b0111;
             end
         endcase
     end
 
-    // -----------------------
-    // Decoder
-    // -----------------------
     bcd_to_7seg decoder (
         .bcd(current_digit),
         .seg(segments)
@@ -208,9 +166,6 @@ module cronometro_top (
 endmodule
 
 
-// ===============================
-// DEBOUNCE
-// ===============================
 module debounce (
     input  wire clk,
     input  wire rst_n,
@@ -224,6 +179,12 @@ module debounce (
         sync_1 <= sync_0;
     end
 
+`ifdef SIM
+    parameter MAX = 1000;
+`else
+    parameter MAX = 19'd499999;
+`endif
+
     reg [18:0] cnt;
     reg stable_state;
 
@@ -233,7 +194,7 @@ module debounce (
             stable_state <= 0;
         end else if (sync_1 != stable_state) begin
             cnt <= cnt + 1;
-            if (cnt == 19'd499999) begin
+            if (cnt == MAX) begin
                 stable_state <= sync_1;
                 cnt <= 0;
             end
@@ -256,26 +217,23 @@ module debounce (
 endmodule
 
 
-// ===============================
-// BCD a 7 segmentos
-// ===============================
 module bcd_to_7seg (
     input  wire [3:0] bcd,
     output reg  [7:0] seg
 );
     always @(*) begin
         case (bcd)
-            4'h0: seg = 8'b1100_0000;
-            4'h1: seg = 8'b1111_1001;
-            4'h2: seg = 8'b1010_0100;
-            4'h3: seg = 8'b1011_0000;
-            4'h4: seg = 8'b1001_1001;
-            4'h5: seg = 8'b1001_0010;
-            4'h6: seg = 8'b1000_0010;
-            4'h7: seg = 8'b1111_1000;
-            4'h8: seg = 8'b1000_0000;
-            4'h9: seg = 8'b1001_0000;
-            default: seg = 8'b1111_1111;
+            4'h0: seg = 8'b11000000;
+            4'h1: seg = 8'b11111001;
+            4'h2: seg = 8'b10100100;
+            4'h3: seg = 8'b10110000;
+            4'h4: seg = 8'b10011001;
+            4'h5: seg = 8'b10010010;
+            4'h6: seg = 8'b10000010;
+            4'h7: seg = 8'b11111000;
+            4'h8: seg = 8'b10000000;
+            4'h9: seg = 8'b10010000;
+            default: seg = 8'b11111111;
         endcase
     end
 endmodule
