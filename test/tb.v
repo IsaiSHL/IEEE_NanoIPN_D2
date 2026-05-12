@@ -25,23 +25,28 @@ module tb;
 
     always #10 clk = ~clk;
 
-    initial begin
-        clk = 0;
-        rst_n = 0;
-        ui_in = 0;
-        uio_in = 0;
+   initial begin
+    clk = 0;
+    rst_n = 0;
+    ui_in = 0;
+    uio_in = 0;
+    // ena ya está fijo en 1 por la conexión, así que no hay problema
 
-        #100;
-        rst_n = 1;
-
-        #200;
-        ui_in[0] = 1;
-        #2000;
-        ui_in[0] = 0;
-
-        #20000;
-
-        $finish;
-    end
+    #100;
+    rst_n = 1;     // Liberar reset
+    
+    // Esperar un poco para que el cronómetro se estabilice
+    #1000;
+    
+    // Simular presión de botón start
+    ui_in[0] = 1;
+    #2000;
+    ui_in[0] = 0;
+    
+    // Dejar correr el cronómetro un rato
+    #50000;
+    
+    $finish;
+end
 
 endmodule
